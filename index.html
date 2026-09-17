@@ -108,6 +108,10 @@
   .donut-legend-dot{width:9px;height:9px;border-radius:50%;flex:none;}
   .donut-legend-label{color:var(--ink-2);}
   .donut-legend-val{font-family:var(--mono);color:var(--steel);margin-left:auto;padding-left:10px;}
+  .ta-donut-grid{display:flex;flex-wrap:wrap;gap:18px;margin-top:10px;}
+  .ta-donut-card{display:flex;flex-direction:column;align-items:center;width:110px;text-align:center;}
+  .ta-donut-name{font-size:11.5px;font-weight:700;color:var(--ink);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;}
+  .ta-donut-sub{font-size:10px;color:var(--steel);font-family:var(--mono);margin-top:2px;}
   .year-row{
     display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line);font-size:12.5px;
   }
@@ -1098,11 +1102,13 @@ function renderSummary(){
 /* ---------- Donut charts (pure SVG, no external library) ---------- */
 function renderDonut(containerId, segments, centerLabel){
   const el = document.getElementById(containerId);
-  const size = 132, stroke = 20, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  el.innerHTML = buildDonutHTML(segments, centerLabel, 132, 20);
+}
+function buildDonutHTML(segments, centerLabel, size, stroke){
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r;
   const total = segments.reduce((a,s)=> a + s.value, 0);
   if(!total){
-    el.innerHTML = '<p class="val empty" style="margin-top:8px;">ยังไม่มีข้อมูล</p>';
-    return;
+    return '<p class="val empty" style="margin-top:8px;">ยังไม่มีข้อมูล</p>';
   }
   let offset = 0;
   const circles = segments.filter(s=>s.value>0).map(s=>{
@@ -1119,7 +1125,7 @@ function renderDonut(containerId, segments, centerLabel){
       <span class="donut-legend-label">${escapeHtml(s.label)}</span>
       <span class="donut-legend-val">${s.value}</span>
     </div>`).join('');
-  el.innerHTML = `
+  return `
     <div class="donut-wrap">
       <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${stroke}"/>
@@ -1129,6 +1135,24 @@ function renderDonut(containerId, segments, centerLabel){
       </svg>
       <div class="donut-legend">${legend}</div>
     </div>`;
+}
+function buildMiniDonutSVG(segments, centerPctText, size, stroke){
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  const total = segments.reduce((a,s)=> a + s.value, 0);
+  let offset = 0;
+  const circles = total ? segments.filter(s=>s.value>0).map(s=>{
+    const frac = s.value / total;
+    const dash = frac * c;
+    const seg = `<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${stroke}"
+      stroke-dasharray="${dash} ${c-dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${size/2} ${size/2})"/>`;
+    offset += dash;
+    return seg;
+  }).join('') : '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${stroke}"/>
+    ${circles}
+    <text x="${size/2}" y="${size/2+4}" text-anchor="middle" font-family="var(--mono)" font-size="14" font-weight="700" fill="var(--ink)">${centerPctText}</text>
+  </svg>`;
 }
 
 const STATUS_COLORS = ['#2E8B57','#E8952B','#0C7F97','#BC0B1D','#6B4C9A','#164776','#C9A227','#6C7A93'];
@@ -1171,7 +1195,8 @@ function renderCharts(){
       <span class="yr-count">${yearCounts[y]} โครงการ</span>
     </div>`).join('') : '<p class="val empty">ยังไม่มีข้อมูล</p>';
 
-  // Per-TA progress breakdown: average progress % across each TA's own projects
+  // Per-TA progress breakdown, shown as a mini donut per TA
+  // (Completed / In Progress / Not Started among that TA's own projects)
   const taGroups = {};
   p.forEach(x=>{
     const ta = (x.ta||'').trim() || 'ไม่ระบุ TA';
@@ -1179,18 +1204,24 @@ function renderCharts(){
   });
   const taNames = Object.keys(taGroups).sort((a,b)=> a.localeCompare(b));
   const taWrap = document.getElementById('taBreakdown');
-  taWrap.innerHTML = taNames.length ? taNames.map(ta=>{
+  taWrap.innerHTML = taNames.length ? `<div class="ta-donut-grid">` + taNames.map(ta=>{
     const projects = taGroups[ta];
-    const avg = projects.reduce((a,c)=> a + (c.progress_pct||0), 0) / projects.length;
-    const avgPct = pct(avg);
-    const completedCount = projects.filter(x=>x.is_complete).length;
+    const taCompleted = projects.filter(x=>x.is_complete).length;
+    const taNotStarted = projects.filter(x=>!x.is_complete && (!x.progress_pct || x.progress_pct===0)).length;
+    const taInProgress = projects.length - taCompleted - taNotStarted;
+    const avgPct = pct(projects.reduce((a,c)=> a + (c.progress_pct||0), 0) / projects.length);
+    const miniSvg = buildMiniDonutSVG([
+      {value: taCompleted, color:'#2E8B57'},
+      {value: taInProgress, color:'#E8952B'},
+      {value: taNotStarted, color:'#6C7A93'}
+    ], avgPct + '%', 92, 14);
     return `
-    <div class="year-row">
-      <span class="yr-label" style="flex:0 0 140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(ta)}</span>
-      <span class="yr-bar-wrap"><span class="yr-bar" style="width:${avgPct}%;background:${avgPct>=90?'var(--green)':avgPct>=50?'var(--amber)':'var(--red)'};"></span></span>
-      <span class="yr-count">${avgPct}% · ${projects.length} โครงการ (เสร็จ ${completedCount})</span>
-    </div>`;
-  }).join('') : '<p class="val empty">ยังไม่มีข้อมูล</p>';
+      <div class="ta-donut-card">
+        ${miniSvg}
+        <div class="ta-donut-name">${escapeHtml(ta)}</div>
+        <div class="ta-donut-sub">${projects.length} โครงการ · เสร็จ ${taCompleted}</div>
+      </div>`;
+  }).join('') + `</div>` : '<p class="val empty">ยังไม่มีข้อมูล</p>';
 }
 
 function renderStatusFilter(){
